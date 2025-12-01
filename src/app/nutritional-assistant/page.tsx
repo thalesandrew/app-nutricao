@@ -64,10 +64,24 @@ export default function NutritionalAssistant() {
 
   const checkUser = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      // Verificar se o Supabase está configurado
+      if (!supabase) {
+        console.log('Supabase não configurado, usando modo demo');
+        setLoading(false);
+        return;
+      }
+
+      const { data: { session }, error } = await supabase.auth.getSession();
       
+      if (error) {
+        console.error('Erro ao verificar sessão:', error);
+        setLoading(false);
+        return;
+      }
+
       if (!session) {
-        router.push('/auth');
+        // Modo demo sem autenticação
+        setLoading(false);
         return;
       }
 
@@ -76,13 +90,14 @@ export default function NutritionalAssistant() {
     } catch (error) {
       console.error('Erro ao verificar usuário:', error);
       // Continuar sem autenticação em modo demo
-    } finally {
       setLoading(false);
     }
   };
 
   const loadUserProfile = async (userId: string) => {
     try {
+      if (!supabase) return;
+
       // Tentar carregar perfil do Supabase
       const { data, error } = await supabase
         .from('user_profiles')
@@ -137,54 +152,48 @@ export default function NutritionalAssistant() {
   };
 
   const saveProfile = async () => {
-    if (!user) return;
-
     const age = parseInt(profileForm.age);
     const weight = parseFloat(profileForm.weight);
     const height = parseFloat(profileForm.height);
     const bmi = calculateBMI(weight, height);
 
-    const profile = {
-      user_id: user.id,
+    const profile: UserProfile = {
       age,
       weight,
       height,
       bmi,
-      plan_type: 'plus', // Simular plano Plus
-      updated_at: new Date().toISOString(),
+      planType: 'plus',
     };
 
-    try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .upsert(profile);
+    if (user && supabase) {
+      try {
+        const { error } = await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: user.id,
+            age,
+            weight,
+            height,
+            bmi,
+            plan_type: 'plus',
+            updated_at: new Date().toISOString(),
+          });
 
-      if (!error) {
-        setUserProfile({
-          age,
-          weight,
-          height,
-          bmi,
-          planType: 'plus',
-        });
-        setShowProfileModal(false);
+        if (error) {
+          console.error('Erro ao salvar perfil:', error);
+        }
+      } catch (error) {
+        console.error('Erro ao salvar perfil:', error);
       }
-    } catch (error) {
-      console.error('Erro ao salvar perfil:', error);
-      // Salvar localmente
-      setUserProfile({
-        age,
-        weight,
-        height,
-        bmi,
-        planType: 'plus',
-      });
-      setShowProfileModal(false);
     }
+
+    // Salvar localmente sempre
+    setUserProfile(profile);
+    setShowProfileModal(false);
   };
 
   const addGoal = async () => {
-    if (!user || !goalForm.nutrient) return;
+    if (!goalForm.nutrient) return;
 
     const nutrient = availableNutrients.find(n => n.name === goalForm.nutrient);
     if (!nutrient) return;
@@ -193,51 +202,40 @@ export default function NutritionalAssistant() {
       ? parseFloat(goalForm.customValue)
       : adjustGoalForProfile(nutrient, userProfile);
 
-    const goal = {
-      user_id: user.id,
-      nutrient_name: nutrient.name,
-      target_value: targetValue,
-      unit: nutrient.unit,
-      updated_at: new Date().toISOString(),
-    };
+    if (user && supabase) {
+      try {
+        const { error } = await supabase
+          .from('daily_goals')
+          .upsert({
+            user_id: user.id,
+            nutrient_name: nutrient.name,
+            target_value: targetValue,
+            unit: nutrient.unit,
+            updated_at: new Date().toISOString(),
+          });
 
-    try {
-      const { error } = await supabase
-        .from('daily_goals')
-        .upsert(goal);
-
-      if (!error) {
-        const newGoals = new Map(goals);
-        newGoals.set(nutrient.name, targetValue);
-        setGoals(newGoals);
-        
-        if (!selectedNutrients.find(n => n.name === nutrient.name)) {
-          setSelectedNutrients([...selectedNutrients, nutrient]);
+        if (error) {
+          console.error('Erro ao adicionar meta:', error);
         }
-
-        setShowGoalModal(false);
-        setGoalForm({ nutrient: '', customValue: '' });
-        
-        // Gerar sugestões
-        generateSuggestions(nutrient.key, targetValue);
+      } catch (error) {
+        console.error('Erro ao adicionar meta:', error);
       }
-    } catch (error) {
-      console.error('Erro ao adicionar meta:', error);
-      // Adicionar localmente
-      const newGoals = new Map(goals);
-      newGoals.set(nutrient.name, targetValue);
-      setGoals(newGoals);
-      
-      if (!selectedNutrients.find(n => n.name === nutrient.name)) {
-        setSelectedNutrients([...selectedNutrients, nutrient]);
-      }
-
-      setShowGoalModal(false);
-      setGoalForm({ nutrient: '', customValue: '' });
-      
-      // Gerar sugestões
-      generateSuggestions(nutrient.key, targetValue);
     }
+
+    // Adicionar localmente sempre
+    const newGoals = new Map(goals);
+    newGoals.set(nutrient.name, targetValue);
+    setGoals(newGoals);
+    
+    if (!selectedNutrients.find(n => n.name === nutrient.name)) {
+      setSelectedNutrients([...selectedNutrients, nutrient]);
+    }
+
+    setShowGoalModal(false);
+    setGoalForm({ nutrient: '', customValue: '' });
+    
+    // Gerar sugestões
+    generateSuggestions(nutrient.key, targetValue);
   };
 
   const generateSuggestions = (nutrientKey: string, targetValue: number) => {
@@ -255,36 +253,32 @@ export default function NutritionalAssistant() {
   };
 
   const registerConsumption = async (nutrientName: string, foodName: string, quantity: number, nutrientValue: number) => {
-    if (!user) return;
+    if (user && supabase) {
+      try {
+        const { error } = await supabase
+          .from('food_consumption')
+          .insert({
+            user_id: user.id,
+            food_name: foodName,
+            quantity,
+            nutrient_name: nutrientName,
+            nutrient_value: nutrientValue,
+            consumption_date: new Date().toISOString().split('T')[0],
+          });
 
-    const consumption_item = {
-      user_id: user.id,
-      food_name: foodName,
-      quantity,
-      nutrient_name: nutrientName,
-      nutrient_value: nutrientValue,
-      consumption_date: new Date().toISOString().split('T')[0],
-    };
-
-    try {
-      const { error } = await supabase
-        .from('food_consumption')
-        .insert(consumption_item);
-
-      if (!error) {
-        const newConsumption = new Map(consumption);
-        const current = newConsumption.get(nutrientName) || 0;
-        newConsumption.set(nutrientName, current + nutrientValue);
-        setConsumption(newConsumption);
+        if (error) {
+          console.error('Erro ao registrar consumo:', error);
+        }
+      } catch (error) {
+        console.error('Erro ao registrar consumo:', error);
       }
-    } catch (error) {
-      console.error('Erro ao registrar consumo:', error);
-      // Registrar localmente
-      const newConsumption = new Map(consumption);
-      const current = newConsumption.get(nutrientName) || 0;
-      newConsumption.set(nutrientName, current + nutrientValue);
-      setConsumption(newConsumption);
     }
+
+    // Registrar localmente sempre
+    const newConsumption = new Map(consumption);
+    const current = newConsumption.get(nutrientName) || 0;
+    newConsumption.set(nutrientName, current + nutrientValue);
+    setConsumption(newConsumption);
   };
 
   if (loading) {
